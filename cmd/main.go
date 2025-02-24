@@ -1,14 +1,7 @@
-// filepath: /D:/Manjaro_Backup/Music/CS 2025/system design/multi-tenat-data-stream/md-geo-track/cmd/main.go
 package main
 
 import (
 	"fmt"
-	"log"
-	"md-geo-track/controller"
-	"md-geo-track/implementation"
-	"md-geo-track/kafka"
-	"md-geo-track/repository"
-	httpTransport "md-geo-track/transport/http"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,20 +9,38 @@ import (
 	"syscall"
 	"time"
 
+	"md-geo-track/controller"
+	"md-geo-track/implementation"
+	"md-geo-track/kafka"
+	"md-geo-track/repository"
+	httpTransport "md-geo-track/transport/http"
+
 	"github.com/joho/godotenv"
+	"github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func main() {
+	// logger
+	log := logrus.New()
+	log.SetFormatter(&logrus.JSONFormatter{
+		TimestampFormat: "2006-01-02 15:04:05",
+	})
+
+	log.Info("Starting application...")
+
+	// Load environment variables
 	err := godotenv.Load("../.env")
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.WithError(err).Fatal("Error loading .env file")
 	}
+
 	var (
+		// Load configuration variables
 		httpAddr = os.Getenv("HTTP_ADDR")
 
-		// DB ENV
+		// Database ENV variables
 		dbHost     = os.Getenv("DB_HOST")
 		dbUser     = os.Getenv("DB_USER")
 		dbPassword = os.Getenv("DB_PASSWORD")
@@ -38,7 +49,7 @@ func main() {
 		dbSSLMode  = os.Getenv("DB_SSLMODE")
 		dbTimeZone = os.Getenv("DB_TIMEZONE")
 
-		// KAFKA ENV
+		// Kafka ENV variables
 		kafkaBrokers  = []string{os.Getenv("BROKERS")}
 		kafkaTopic    = os.Getenv("TOPIC")
 		maxRetries    = os.Getenv("MAX_RETRIES")
@@ -50,37 +61,50 @@ func main() {
 		dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode, dbTimeZone)
 
 	// Connect to Database
+	log.Info("Connecting to database...")
+
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		log.WithError(err).Fatal("Failed to connect to database")
 	}
 
-	repo := repository.New(db)
+	log.Info("Successfully connected to the database.")
+
+	// Initialize repository
+	repo := repository.New(db, log)
 
 	// Ensure Kafka topic exists before creating the producer
-	err = kafka.EnsureTopicExists(kafkaBrokers, kafkaTopic)
+	log.Info("Ensuring Kafka topic exists...")
+
+	err = kafka.EnsureTopicExists(kafkaBrokers, kafkaTopic, log)
 	if err != nil {
-		log.Fatalf("Failed to ensure topic exists: %v", err)
+		log.WithError(err).Fatal("Failed to ensure Kafka topic exists")
 	}
+
+	// Convert Kafka configurations
 	maxRetriesInt, err := strconv.Atoi(maxRetries)
 	if err != nil {
-		log.Fatalf("Failed to convert MAX_RETRIES to int: %v", err)
+		log.WithError(err).Fatal("Failed to convert MAX_RETRIES to int")
 	}
+
 	retryIntervalInt, err := strconv.Atoi(retryInterval)
 	if err != nil {
-		log.Fatalf("Failed to convert RETRY_INTERVAL to int: %v", err)
+		log.WithError(err).Fatal("Failed to convert RETRY_INTERVAL to int")
 	}
-	log.Println(maxRetriesInt)
-	log.Println(retryIntervalInt)
+
+	// Create Kafka producer
 	kafkaConfig := kafka.NewKafkaConfig(kafkaBrokers, kafkaTopic, maxRetriesInt, time.Duration(retryIntervalInt)*time.Second)
-	producer := kafka.NewSyncProducer(kafkaConfig)
+	producer := kafka.NewSyncProducer(kafkaConfig, log)
+	log.Info("Kafka producer initialized successfully.")
 
-	svc := implementation.New(repo, producer, kafkaTopic)
+	// Initialize service and controller
+	svc := implementation.New(repo, producer, kafkaTopic, log)
+	controller := controller.New(svc, log)
 
-	controller := controller.New(svc)
+	// Set up HTTP router
+	handler := httpTransport.SetUpRouter(controller, log)
 
-	handler := httpTransport.SetUpRouter(controller)
-
+	// Handle OS signals for graceful shutdown
 	errs := make(chan error)
 
 	go func() {
@@ -89,7 +113,7 @@ func main() {
 		errs <- fmt.Errorf("%s", <-c)
 	}()
 
-	fmt.Println("Server is running " + httpAddr)
+	log.WithField("address", httpAddr).Info("Starting HTTP server...")
 
 	go func() {
 		server := &http.Server{
@@ -99,5 +123,5 @@ func main() {
 		errs <- server.ListenAndServe()
 	}()
 
-	log.Println("exit", <-errs)
+	log.WithError(<-errs).Error("Application exiting due to error")
 }

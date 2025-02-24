@@ -7,6 +7,7 @@ import (
 )
 
 func (s *service) ProcessLocation(req location.LocationReq) error {
+
 	// Store location data in the repository
 	err := s.repository.ProcessLocation(req)
 	if err != nil {
@@ -18,6 +19,12 @@ func (s *service) ProcessLocation(req location.LocationReq) error {
 		return err
 	}
 
-	// Publish location data to Kafka with retries
-	return kafka.PublishMessage(s.producer, s.topic, string(message))
+	// Publish location data to Kafka
+	if err := kafka.PublishMessage(s.producer, s.topic, string(message), s.log); err != nil {
+		return err
+	}
+
+	s.log.Info("Location data published successfully")
+
+	return nil
 }

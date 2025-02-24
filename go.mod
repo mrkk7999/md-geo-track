@@ -4,8 +4,11 @@ go 1.23.3
 
 require (
 	github.com/joho/godotenv v1.5.1
+	github.com/sirupsen/logrus v1.9.3
 	gorm.io/driver/postgres v1.5.11
 )
+
+require golang.org/x/sys v0.29.0 // indirect
 
 require (
 	github.com/IBM/sarama v1.45.0

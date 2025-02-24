@@ -1,10 +1,10 @@
 package kafka
 
 import (
-	"log"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/sirupsen/logrus"
 )
 
 type KafkaConfig struct {
@@ -23,16 +23,17 @@ func NewKafkaConfig(brokers []string, topic string, maxRetries int, retryInterva
 	}
 }
 
-func NewSyncProducer(config *KafkaConfig) sarama.SyncProducer {
+func NewSyncProducer(config *KafkaConfig, log *logrus.Logger) sarama.SyncProducer {
 	producerConfig := sarama.NewConfig()
-	
+
 	producerConfig.Producer.Retry.Max = config.MaxRetries
 	producerConfig.Producer.Retry.Backoff = config.RetryInterval
 	producerConfig.Producer.Return.Successes = true
 
 	producer, err := sarama.NewSyncProducer(config.Brokers, producerConfig)
 	if err != nil {
-		log.Fatalf("Failed to start Sarama producer: %v", err)
+		log.Error("Error creating Kafka producer: ", err)
+		return nil
 	}
 	return producer
 }
